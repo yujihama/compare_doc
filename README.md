@@ -2,32 +2,18 @@
 
 PDFドキュメント間の変更点を自動的に検出・分析するStreamlitアプリケーションです。
 
-## 🚀 新機能: Langgraph Prebuilt Agent
+## 🚀 概要
 
-最新のLanggraphのprebuilt `create_react_agent`を使用した、より効率的で保守しやすいドキュメント比較機能を追加しました。
+本アプリはPDFドキュメント間の差分比較を行うシンプルなツールです。現行実装は「従来の閾値ベース」アルゴリズムを使用し、結果のインタラクティブ表示とMarkdown/JSON/CSVへの出力を提供します。
 
 ### 利用可能なマッチングアルゴリズム
 
-1. **従来の閾値ベース** - 既存のTF-IDF + コサイン類似度アルゴリズム
-2. **Langgraph Reactエージェント** - カスタムStateGraphによる詳細制御
-3. **Langgraph Prebuilt Agent** ⭐ **NEW** - Prebuilt create_react_agentによる最適化された分析
-
-### Langgraph Prebuilt Agentの特徴
-
-- 🤖 **最新のReactパターン**: Langgraphのprebuilt `create_react_agent`を使用
-- 🧠 **シンプルで効率的**: より少ないコードで高い性能を実現
-- 💾 **メモリ機能**: 会話の継続とコンテキスト保持
-- 🛠️ **4つの専用ツール**:
-  - 文字列検索ツール
-  - ベクトル類似度検索ツール
-  - チャンク詳細取得ツール
-  - 前後チャンク取得ツール
-- 📋 **詳細ログ**: エージェント対話、ツール実行、比較結果の詳細ログ
+1. **従来の閾値ベース** - TF-IDF（エンベディング）＋類似度に基づくグルーピングとLLM補助分析
 
 ## 機能
 
 - **PDFファイルの自動解析**: 見出しベースでのチャンク分割
-- **複数のマッチングアルゴリズム**: 用途に応じて選択可能
+- **マッチングアルゴリズム**: 現在は従来の閾値ベースのみ
 - **インタラクティブな結果表示**: 変更タイプ別フィルタリング
 - **多様な出力形式**: Markdown、JSON、CSV形式での結果出力
 - **キャッシュ機能**: エンベディングの高速化
@@ -38,7 +24,7 @@ PDFドキュメント間の変更点を自動的に検出・分析するStreamli
 ### 必要な環境
 
 - Python 3.8以上
-- OpenAI APIキー（Langgraph機能使用時）
+- OpenAI または Azure OpenAI のAPIキー（GPT補助分析・埋め込み利用時）
 
 ### セットアップ
 
@@ -79,22 +65,15 @@ streamlit run app.py
 ### 基本的な使用手順
 
 1. **ファイルアップロード**: 旧ドキュメントと新ドキュメント（PDF）をアップロード
-2. **アルゴリズム選択**: 
-   - 従来の閾値ベース（高速、設定可能）
-   - Langgraph Reactエージェント（詳細制御）
-   - **Langgraph Prebuilt Agent**（推奨、最新）
-3. **設定調整**: 類似度閾値やログレベルの調整
-4. **比較実行**: ボタンクリックで分析開始
-5. **結果確認**: インタラクティブな結果表示と出力
+2. **設定調整**: 類似度閾値、細分化モード、初期クラスター形成モードなどを必要に応じて調整
+3. **比較実行**: ボタンクリックで分析開始
+4. **結果確認**: インタラクティブな結果表示とエクスポート
 
-### Langgraph Prebuilt Agentの使用
+### エクスポート
 
-1. サイドバーで「Langgraph Prebuilt Agent」を選択
-2. 必要に応じて設定を調整:
-   - ログレベル（INFO推奨）
-   - 類似度閾値（0.75推奨）
-   - 詳細ログ表示（ON推奨）
-3. 比較実行でAIエージェントが自動分析
+- Markdown（詳細/サマリー）: `doc_compare/markdown_exporter.py` の `export_to_markdown` / `export_summary_to_markdown`
+- JSON: `export_to_json`
+- CSV: `export_to_csv`（グループサマリー）, `export_statistics_to_csv`（統計）
 
 ## 技術仕様
 
@@ -102,27 +81,21 @@ streamlit run app.py
 
 - **フロントエンド**: Streamlit
 - **バックエンド**: Python
-- **AI/ML**: OpenAI GPT-4o-mini, text-embedding-3-large
+- **AI/ML**: OpenAI/ Azure OpenAI（Chat: `gpt-4.1-mini` 既定, Embedding: `text-embedding-3-small` 既定）
 - **フレームワーク**: LangChain, LangGraph
 - **データ処理**: pandas, numpy, scikit-learn
 
-### Langgraph Prebuilt Agentの技術詳細
+### LLM/埋め込みの切替
 
-```python
-# 基本的な使用例
-from doc_compare.langgraph_prebuilt_matcher import LanggraphPrebuiltDocumentMatcher
+`.env` の `LLM_PROVIDER` により OpenAI / Azure を切替可能です。`doc_compare/config.py` の `get_chat_llm` / `get_embeddings_client` を参照してください。
 
-matcher = LanggraphPrebuiltDocumentMatcher()
-result = matcher.compare_documents(old_chunks, new_chunks)
-```
+### ワークフロー（従来アルゴリズム）
 
-### ワークフロー
-
-1. **ドキュメント読み込み**: チャンク形式の統一
-2. **ツール作成**: 4つの専用ツールの初期化
-3. **Reactエージェント作成**: create_react_agentによる初期化
-4. **チャンク分析**: 各チャンクを独立したスレッドで分析
-5. **結果生成**: Markdown形式での結果出力
+1. **ドキュメント読み込み**: PDFから見出しベースでチャンク抽出（`doc_compare/pdf_util.py`）
+2. **埋め込み生成**: 文/チャンクの埋め込み作成（`doc_compare/text_processing.py`）
+3. **グルーピング**: 類似度と階層制約を用いたグループ化（`doc_compare/similarity.py`）
+4. **LLM補助分析**: グループ毎の変更タイプ推定（`doc_compare/structured_gpt_analysis.py`）
+5. **レポート生成**: 構造化モデルに整形（`doc_compare/structured_report.py`）→ 各種エクスポート
 
 ## ファイル構成
 
@@ -130,39 +103,30 @@ result = matcher.compare_documents(old_chunks, new_chunks)
 compare_doc/
 ├── app.py                              # Streamlitメインアプリ
 ├── doc_compare/
-│   ├── langgraph_prebuilt_matcher.py   # 🆕 Prebuilt Agent
-│   ├── langgraph_matcher.py            # カスタムReact Agent
 │   ├── main_processor.py               # 従来アルゴリズム
 │   ├── pdf_util.py                     # PDF処理
 │   ├── text_processing.py              # テキスト処理
 │   └── ...
-├── test_prebuilt_matcher.py            # 🆕 テストスクリプト
 ├── requirements.txt                     # 依存関係
 └── README.md                           # このファイル
 ```
 
 ## ログとデバッグ
 
-### 詳細ログ機能
+### ログファイル
 
-Langgraph Prebuilt Agentは詳細なログ機能を提供:
-
-- `log/session_YYYYMMDD_HHMMSS/agent_interactions.jsonl` - エージェント対話ログ
-- `log/session_YYYYMMDD_HHMMSS/tool_executions.jsonl` - ツール実行ログ
-- `log/session_YYYYMMDD_HHMMSS/comparison_results.jsonl` - 比較結果ログ
-- `log/session_YYYYMMDD_HHMMSS/session_summary.md` - セッションサマリー
+- `log/llm_analysis_details.log`：LLM分析対象/バイパス対象の詳細（`doc_compare/main_processor.py`）
+- `group_debug.log`：デバッグ用グループ情報（`app.py`）
 
 ### テスト実行
 
-```bash
-python test_prebuilt_matcher.py
-```
+（現行実装に対応した統合テストスクリプトは未提供です）
 
 ## トラブルシューティング
 
 ### よくある問題
 
-1. **OpenAI APIキーエラー**:
+1. **OpenAI/Azure APIキーエラー**:
    ```bash
    # 環境変数を確認
    echo $OPENAI_API_KEY  # Linux/macOS
@@ -182,8 +146,8 @@ python test_prebuilt_matcher.py
 ### パフォーマンス最適化
 
 - **キャッシュ活用**: 同じドキュメントの再処理時間短縮
-- **チャンク制限**: テストモードで最大5チャンクに制限
-- **並列処理**: ツール実行の並列化
+- **チャンク制限**: 大規模PDFではチャンク数を制限
+- **キャッシュの再利用**: 既存のエンベディングキャッシュを優先利用
 
 ## 貢献
 
@@ -195,16 +159,9 @@ MIT License
 
 ## 更新履歴
 
-### v2.1.0 (最新)
-- 🆕 Langgraph Prebuilt Agent追加
-- 🔧 create_react_agentによる最適化
-- 📋 詳細ログ機能強化
-- 💾 メモリ機能追加
-
-### v2.0.0
-- Langgraph Reactエージェント追加
-- カスタムStateGraphによる詳細制御
+### v1.1.0（最新）
+- ドキュメント構造化レポートとCSV統計出力を強化
+- LLM補助分析（構造化出力）に対応
 
 ### v1.0.0
-- 初期リリース
-- 従来の閾値ベースアルゴリズム 
+- 初期リリース（従来の閾値ベースアルゴリズム）
