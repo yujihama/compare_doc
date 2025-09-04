@@ -379,6 +379,19 @@ def check_and_load_from_cache(pdf_file, prefix):
     if not pdf_file:
         return None
 
+    # 復元ログ出力用ヘルパー（log/cache_restore.log に追記）
+    def _append_restore_log(message: str):
+        try:
+            log_dir = "log"
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, "cache_restore.log")
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_path, "a", encoding="utf-8") as lf:
+                lf.write(f"{ts} {message}\n")
+        except Exception:
+            # ログ書き込み失敗はアプリ動作に影響させない
+            pass
+
     try:
         from doc_compare.config import CACHE_CONFIG # 関数内でimport
         import os # 関数内でimport
@@ -389,6 +402,15 @@ def check_and_load_from_cache(pdf_file, prefix):
             
         expected_metadata_file = os.path.join(cache_dir_path, f"{prefix}_cache_metadata.json")
         expected_chunks_file = os.path.join(cache_dir_path, f"{prefix}_chunks.txt")
+        # 事前の存在確認ログ
+        try:
+            exists_flag = os.path.exists(expected_chunks_file)
+            size_bytes = os.path.getsize(expected_chunks_file) if exists_flag else 0
+            _append_restore_log(
+                f"[{prefix}] chunks_file_exists={exists_flag} path={expected_chunks_file} size_bytes={size_bytes}"
+            )
+        except Exception as _e:
+            _append_restore_log(f"[{prefix}] chunks_file_exists_check_error path={expected_chunks_file} error={str(_e)}")
             
     except ImportError:
         logging.error(f"({prefix}): CACHE_CONFIG を import できませんでした。doc_compare.config を確認してください。")
@@ -429,6 +451,7 @@ def check_and_load_from_cache(pdf_file, prefix):
                 chunk_sections = content.split("#id: ")[1:]
                 if not chunk_sections: 
                     logging.warning(f"({prefix}): {prefix}_chunks.txt をsplitしましたが、有効なセクションがありませんでした。")
+                _append_restore_log(f"[{prefix}] chunk_sections={len(chunk_sections)} path={chunks_file_path}")
                 
                 for section_idx, section in enumerate(chunk_sections):
                     lines = section.split("\n")
@@ -437,6 +460,9 @@ def check_and_load_from_cache(pdf_file, prefix):
                         chunk_id_match = re.match(r"^([a-zA-Z0-9_]+)", chunk_id_line)
                         if not chunk_id_match:
                             logging.warning(f"({prefix}): セクション {{section_idx}} でchunk_idがパースできませんでした: {{chunk_id_line}}")
+                            _append_restore_log(
+                                f"[{prefix}] section={section_idx} id_parse_failed=true id_line='{chunk_id_line}' restored=false chars=0 reason=id_parse_failed"
+                            )
                             continue
                         chunk_id = chunk_id_match.group(1)
                         
@@ -446,6 +472,9 @@ def check_and_load_from_cache(pdf_file, prefix):
                                 break
                             text_lines.append(line_content)
                         chunk_text = "\n".join(text_lines).strip()
+                        _append_restore_log(
+                            f"[{prefix}] section={section_idx} id={chunk_id} restored=true chars={len(chunk_text)}"
+                        )
                         
                         chunks.append({
                             "id": chunk_id,
@@ -454,21 +483,29 @@ def check_and_load_from_cache(pdf_file, prefix):
                 
                 if chunks:
                     logging.info(f"({prefix}): {prefix}_chunks.txt から {len(chunks)}個のチャンクを復元しました。")
+                    _append_restore_log(f"[{prefix}] restored_chunks_count={len(chunks)} path={chunks_file_path}")
                     return chunks
             
             logging.info(f"({prefix}): {prefix}_chunks.txt がないか有効なチャンクなし。メタデータから基本情報のみ復元試行。")
+            _append_restore_log(f"[{prefix}] chunks_file_missing_or_invalid=true path={chunks_file_path} -> fallback_to_metadata")
             chunks_info = metadata.get("chunks_info", [])
             if not chunks_info:
                 logging.warning(f"({prefix}): メタデータに chunks_info がないか空です。キャッシュからの復元に失敗しました。")
+                _append_restore_log(f"[{prefix}] metadata_missing_or_empty=true")
                 return None
                 
             chunks = []
             for chunk_info_item in chunks_info:
+                chunk_id_only = chunk_info_item.get("chunk_id", "unknown_id")
+                _append_restore_log(
+                    f"[{prefix}] metadata_only id={chunk_id_only} restored=false chars=0 reason=metadata_only"
+                )
                 chunks.append({
                     "id": chunk_info_item.get("chunk_id", "unknown_id"),
                     "text": f"[キャッシュから復元(メタデータのみ)] {{chunk_info_item.get('chunk_id', 'unknown_id')}}"
                 })
             logging.info(f"({prefix}): メタデータからチャンク情報（IDのみ）を {len(chunks)}個復元しました。")
+            _append_restore_log(f"[{prefix}] restored_from_metadata_count={len(chunks)}")
             return chunks
             
         except Exception as e:

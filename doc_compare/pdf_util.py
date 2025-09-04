@@ -7,7 +7,7 @@ import os
 from typing import BinaryIO, List, Dict
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
-from .config import PDF_CONFIG, OPENAI_CONFIG, get_chat_llm
+from .config import PDF_CONFIG, OPENAI_CONFIG, get_chat_llm, CACHE_CONFIG
 import logging
 
 # 環境変数を読み込み
@@ -274,8 +274,11 @@ def extract_chunks(text: str, prefix: str) -> List[Dict]:
         if len(chunk) < PDF_CONFIG["max_chunk_processing"]:
             break
 
-    # all_chunk_infoをファイルに出力
-    with open(f"{prefix}_all_chunk_info.txt", "w", encoding="utf-8") as f:
+    # all_chunk_infoをファイルに出力（キャッシュディレクトリ配下）
+    cache_dir = CACHE_CONFIG.get("cache_directory", "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    all_info_path = os.path.join(cache_dir, f"{prefix}_all_chunk_info.txt")
+    with open(all_info_path, "w", encoding="utf-8") as f:
         f.write(str(all_chunk_info))
 
     # 各チャンクのテキストを上位階層と結合して作成
@@ -340,8 +343,9 @@ def extract_chunks(text: str, prefix: str) -> List[Dict]:
         
         res_chunks.append({"id": f"{prefix}_chunk_{len(res_chunks)+1}", "text": final_text})
         
-    # ファイル出力
-    with open(f"{prefix}_chunks.txt", "w", encoding="utf-8") as f:
+    # ファイル出力（キャッシュディレクトリ配下）
+    chunks_path = os.path.join(cache_dir, f"{prefix}_chunks.txt")
+    with open(chunks_path, "w", encoding="utf-8") as f:
         for chunk in res_chunks:
             f.write(f"#id: {chunk['id']} ------------------------------\n")
             f.write(chunk["text"])

@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import math
 from typing import List, Literal, Dict, Optional
 from .structured_models import GroupAnalysisResult, ChunkInfo, ComparisonReport
 from .config import UI_COLORS
@@ -71,6 +72,7 @@ def _render_info_box(title: str, color: str) -> str:
     </div>
     """
 
+@st.cache_data(show_spinner=False)
 def create_pie_chart(data: Dict[str, int], title: str, chart_type: str = "change_types") -> go.Figure:
     """統一された円グラフを作成する共通関数"""
     # 0以外の値のみを表示
@@ -136,7 +138,47 @@ def render_chunk_info(chunk: ChunkInfo, label: str):
     
     # 内容をコードブロック形式で表示（改行を適切に処理）
     content = chunk.content
-    st.code(content, language=None)
+    # 長文は初期表示をトリミングし、全文はエクスパンダで表示
+    max_chars = 800
+    if isinstance(content, str) and len(content) > max_chars:
+        st.code(content[:max_chars] + "\n...", language=None)
+        with st.expander("全文を表示"):
+            st.code(content, language=None)
+    else:
+        st.code(content, language=None)
+
+def _render_pagination_controls(total_items: int, key_prefix: str, default_per_page: int = 10) -> tuple[int, int]:
+    """ページネーションのUI（1ページ件数とページ移動）を表示し、(page, per_page)を返す"""
+    if total_items <= 0:
+        return 1, default_per_page
+    per_page = st.selectbox(
+        "1ページあたりの表示件数",
+        options=[5, 10, 20, 50, 100],
+        index=[5, 10, 20, 50, 100].index(default_per_page) if default_per_page in [5, 10, 20, 50, 100] else 1,
+        key=f"{key_prefix}_per_page"
+    )
+    total_pages = max(1, math.ceil(total_items / per_page))
+    current_page = st.session_state.get(f"{key_prefix}_page", 1)
+    cols = st.columns([1, 1, 3, 2])
+    with cols[0]:
+        if st.button("前へ", key=f"{key_prefix}_prev", use_container_width=True) and current_page > 1:
+            current_page -= 1
+    with cols[1]:
+        if st.button("次へ", key=f"{key_prefix}_next", use_container_width=True) and current_page < total_pages:
+            current_page += 1
+    with cols[2]:
+        current_page = st.number_input(
+            "ページ番号",
+            min_value=1,
+            max_value=total_pages,
+            value=current_page,
+            step=1,
+            key=f"{key_prefix}_page_input"
+        )
+    with cols[3]:
+        st.caption(f"全{total_items}件 / {total_pages}ページ")
+    st.session_state[f"{key_prefix}_page"] = int(current_page)
+    return int(current_page), int(per_page)
 
 def render_change_type_badge(change_type: str) -> str:
     """変更の種類に応じたシンプルなバッジを生成"""
@@ -264,20 +306,19 @@ def render_group_analysis(group: GroupAnalysisResult):
         for change in group.analysis.main_changes:
             st.markdown(f"- {change}")
     
-    # 対応関係情報
-    correspondence_col1, correspondence_col2 = st.columns(2)
-    
-    with correspondence_col1:
-        old_info_box = _render_info_box("変更前", "#004a55")
-        st.markdown(old_info_box, unsafe_allow_html=True)
-        for chunk in group.old_chunks:
-            render_chunk_info(chunk, "旧")
-    
-    with correspondence_col2:
-        new_info_box = _render_info_box("変更後", "#004a55")
-        st.markdown(new_info_box, unsafe_allow_html=True)
-        for chunk in group.new_chunks:
-            render_chunk_info(chunk, "新")
+    # 対応関係情報（初期は折りたたみ）
+    with st.expander("対応チャンクの詳細", expanded=False):
+        correspondence_col1, correspondence_col2 = st.columns(2)
+        with correspondence_col1:
+            old_info_box = _render_info_box("変更前", "#004a55")
+            st.markdown(old_info_box, unsafe_allow_html=True)
+            for chunk in group.old_chunks:
+                render_chunk_info(chunk, "旧")
+        with correspondence_col2:
+            new_info_box = _render_info_box("変更後", "#004a55")
+            st.markdown(new_info_box, unsafe_allow_html=True)
+            for chunk in group.new_chunks:
+                render_chunk_info(chunk, "新")
     
     # 詳細分析（展開可能）
     with st.expander("詳細分析を表示"):
@@ -335,29 +376,43 @@ def render_comparison_report(report: ComparisonReport):
     if report.groups:
         section_header = _render_section_header("比較結果詳細", "#059669", "")
         st.markdown(section_header, unsafe_allow_html=True)
-        
-        for i, group in enumerate(report.groups):
+        total_groups = len(report.groups)
+        page, per_page = _render_pagination_controls(total_groups, key_prefix="groups", default_per_page=10)
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        visible_groups = report.groups[start_idx:end_idx]
+        for i, group in enumerate(visible_groups):
             render_group_analysis(group)
-            
-            # グループ間の区切り
-            # if i < len(report.groups) - 1:
             st.markdown("---")
+        st.caption(f"このページに {len(visible_groups)} 件を表示（全 {total_groups} 件中）")
     
     # 追加チャンク（統一されたレイアウト）
     if report.added_chunks:
         st.markdown("---")
-        for i, chunk in enumerate(report.added_chunks):
-            render_added_chunk(chunk, i)
-            if i < len(report.added_chunks) - 1:
-                st.markdown("---")
+        with st.expander(f"追加チャンク（{len(report.added_chunks)}件）", expanded=False):
+            total_added = len(report.added_chunks)
+            page_a, per_page_a = _render_pagination_controls(total_added, key_prefix="added", default_per_page=10)
+            start_a = (page_a - 1) * per_page_a
+            end_a = start_a + per_page_a
+            for i, chunk in enumerate(report.added_chunks[start_a:end_a]):
+                render_added_chunk(chunk, start_a + i)
+                if start_a + i < total_added - 1:
+                    st.markdown("---")
+            st.caption(f"このページに {min(per_page_a, max(0, total_added - start_a))} 件を表示（全 {total_added} 件中）")
     
     # 削除チャンク（統一されたレイアウト）
     if report.deleted_chunks:
         st.markdown("---")
-        for i, chunk in enumerate(report.deleted_chunks):
-            render_deleted_chunk(chunk, i)
-            if i < len(report.deleted_chunks) - 1:
-                st.markdown("---")
+        with st.expander(f"削除チャンク（{len(report.deleted_chunks)}件）", expanded=False):
+            total_deleted = len(report.deleted_chunks)
+            page_d, per_page_d = _render_pagination_controls(total_deleted, key_prefix="deleted", default_per_page=10)
+            start_d = (page_d - 1) * per_page_d
+            end_d = start_d + per_page_d
+            for i, chunk in enumerate(report.deleted_chunks[start_d:end_d]):
+                render_deleted_chunk(chunk, start_d + i)
+                if start_d + i < total_deleted - 1:
+                    st.markdown("---")
+            st.caption(f"このページに {min(per_page_d, max(0, total_deleted - start_d))} 件を表示（全 {total_deleted} 件中）")
 
 def filter_report_by_change_types(report: ComparisonReport, selected_types: List[str]) -> ComparisonReport:
     """選択された変更の種類に基づいてレポートをフィルタ"""
